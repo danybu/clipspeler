@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Clipspeler">
+<meta name="theme-color" content="#17181b">
+<title>Clipspeler</title>
+<style>
+:root{--bg:#17181b;--surface:#1f2024;--ink:#ecebe8;--muted:#a3a4aa;--line:#33353b;--accent:#ff7a3d;color-scheme:dark;
+  --body:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;--mono:ui-monospace,"SF Mono",Menlo,monospace}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.45}
+.wrap{max-width:960px;margin:0 auto;padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(20px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));display:grid;gap:12px}
+.frame{position:relative;width:100%;aspect-ratio:16/9;background:#000;border-radius:8px;overflow:hidden}
+.frame iframe,#player{position:absolute;inset:0;width:100%;height:100%;border:0}
+h1{font-size:1.05rem;margin:0;font-weight:650}
+.meta{font-family:var(--mono);font-size:.85rem;color:var(--muted);display:flex;flex-wrap:wrap;gap:4px 14px}
+.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden}
+.bar>i{display:block;height:100%;width:0;background:var(--accent);transition:width .25s linear}
+.controls{display:flex;flex-wrap:wrap;gap:8px}
+button,select{font:inherit;font-size:.95rem;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:10px 14px;min-height:44px}
+button.primary{background:var(--accent);border-color:var(--accent);color:#1b1006;font-weight:650}
+button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent)}
+button:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.list{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.list li button{width:100%;text-align:left;display:flex;gap:10px;align-items:baseline}
+.list li button .tc{font-family:var(--mono);font-size:.85rem;color:var(--muted);white-space:nowrap}
+.list li.cur button{border-color:var(--accent)}
+.status{font-size:.9rem;color:var(--muted)}
+.empty{color:var(--muted);max-width:60ch}
+code{font-family:var(--mono);font-size:.85rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="frame"><div id="player"></div></div>
+  <div class="bar" aria-hidden="true"><i id="prog"></i></div>
+  <h1 id="title">Clipspeler</h1>
+  <div class="meta" id="meta"></div>
+  <div class="controls">
+    <button class="primary" id="play">▶ Speel clip</button>
+    <button id="replay">↺ Opnieuw</button>
+    <button id="next" hidden>Volgende ›</button>
+    <button id="loop" aria-pressed="false">Herhalen</button>
+    <select id="rate" aria-label="Snelheid"><option value="0.75">0,75×</option><option value="1" selected>1×</option><option value="1.25">1,25×</option><option value="1.5">1,5×</option></select>
+  </div>
+  <div class="status" id="status" aria-live="polite"></div>
+  <ul class="list" id="list"></ul>
+  <p class="empty" id="empty" hidden>Geen clip opgegeven. Gebruik een link zoals <code>?c=VIDEO_ID:270:353:Retrigger</code>; meerdere clips scheid je met <code>|</code>.</p>
+</div>
+<script>
+// Clips komen uit de URL: ?c=ID:start:eind:titel|ID:start:eind:titel  (tijden in seconden)
+var params=new URLSearchParams(location.search);
+var clips=(params.get('c')||'').split('|').filter(Boolean).map(function(s){
+  var p=s.split(':');return {id:p[0],s:+p[1]||0,e:+p[2]||0,t:decodeURIComponent(p.slice(3).join(':')||'')};
+}).filter(function(c){return c.id&&c.e>c.s});
+var heading=params.get('t')||'';
+var i=0,player=null,ready=false,timer=null,loop=false,auto=params.get('auto')!=='0';
+// 'playing' wordt pas waar zodra de geladen clip echt speelt; zo tellen we een vals 'afgelopen'
+// direct na het laden niet mee, en handelen we het einde van een clip maar één keer af.
+var playing=false;
+function fmt(x){x=Math.max(0,Math.round(x));return Math.floor(x/60)+':'+String(x%60).padStart(2,'0')}
+function $(id){return document.getElementById(id)}
+function render(){
+  var c=clips[i];
+  $('title').textContent=c.t||heading||'Clip';
+  $('meta').textContent='';
+  [heading&&c.t?heading:'', fmt(c.s)+' → '+fmt(c.e), 'duur '+fmt(c.e-c.s), clips.length>1?('clip '+(i+1)+' van '+clips.length):''].filter(Boolean).forEach(function(x){var s=document.createElement('span');s.textContent=x;$('meta').appendChild(s)});
+  $('next').hidden=clips.length<2;
+  [].forEach.call($('list').children,function(li,k){li.classList.toggle('cur',k===i)});
+  $('prog').style.width='0';
+}
+function load(k,play){
+  i=k;render();playing=false;if(!ready)return;
+  var c=clips[i],o={videoId:c.id,startSeconds:c.s,endSeconds:c.e};
+  if(play)player.loadVideoById(o);else player.cueVideoById(o);
+}
+function tick(){
+  if(!ready)return;var c=clips[i],t=player.getCurrentTime?player.getCurrentTime():0;
+  $('prog').style.width=Math.min(100,Math.max(0,(t-c.s)/(c.e-c.s)*100))+'%';
+  // vangnet: de speler stopt zelf op endSeconds, maar controleer ook hier
+  if(t>=c.e-0.15&&player.getPlayerState()===1){player.pauseVideo();ended();}
+}
+function ended(){
+  if(!playing)return;playing=false;clearInterval(timer);
+  if(loop){load(i,true);return}
+  if(auto&&i<clips.length-1){$('status').textContent='Volgende clip…';load(i+1,true);return}
+  $('status').textContent='Clip afgelopen.';
+}
+function onState(e){
+  if(e.data===0)ended();
+  if(e.data===1){playing=true;$('status').textContent='';clearInterval(timer);timer=setInterval(tick,250);player.setPlaybackRate(+$('rate').value)}
+  else clearInterval(timer);
+}
+window.onYouTubeIframeAPIReady=function(){
+  if(!clips.length)return;
+  player=new YT.Player('player',{videoId:clips[0].id,
+    playerVars:{start:clips[0].s,end:clips[0].e,playsinline:1,rel:0,modestbranding:1,fs:0},
+    events:{onReady:function(){ready=true;$('status').textContent='Tik op “Speel clip” om te starten.'},onStateChange:onState,
+      onError:function(e){$('status').textContent='YouTube-fout '+e.data+'. Open de video eventueel rechtstreeks op YouTube.'}}});
+};
+if(!clips.length){$('empty').hidden=false;['play','replay','loop','rate'].forEach(function(x){$(x).disabled=true})}
+else{
+  clips.forEach(function(c,k){var li=document.createElement('li'),b=document.createElement('button');
+    b.innerHTML='<span class="tc"></span><span class="nm"></span>';b.querySelector('.tc').textContent=fmt(c.s)+'–'+fmt(c.e);b.querySelector('.nm').textContent=c.t||('Clip '+(k+1));
+    b.onclick=function(){load(k,true)};li.appendChild(b);$('list').appendChild(li)});
+  if(clips.length<2)$('list').hidden=true;
+  document.title=(clips[0].t||heading||'Clip')+' · Clipspeler';
+  render();
+  var s=document.createElement('script');s.src='https://www.youtube.com/iframe_api';document.head.appendChild(s);
+}
+$('play').onclick=function(){if(!ready)return;var st=player.getPlayerState();if(st===2){player.playVideo()}else load(i,true)};
+$('replay').onclick=function(){load(i,true)};
+$('next').onclick=function(){if(i<clips.length-1)load(i+1,true)};
+$('loop').onclick=function(){loop=!loop;this.setAttribute('aria-pressed',loop)};
+$('rate').onchange=function(){if(ready)player.setPlaybackRate(+this.value)};
+</script>
+</body>
+</html>
