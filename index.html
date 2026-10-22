@@ -72,16 +72,26 @@ function render(){
   [].forEach.call($('list').children,function(li,k){li.classList.toggle('cur',k===i)});
   $('prog').style.width='0';
 }
+// Minder advertenties: opeenvolgende clips uit dezelfde video vormen één 'reeks'. De video wordt
+// één keer geladen (eindtijd = het verste einde van de reeks); tussen de clips springt de speler
+// binnen de video, en het einde van elke clip bewaakt tick() zelf.
+var curVid=null,curEnd=0;
+function runEnd(k){var id=clips[k].id,m=clips[k].e;for(var j=k+1;j<clips.length&&clips[j].id===id;j++)m=Math.max(m,clips[j].e);return m}
 function load(k,play){
   i=k;render();playing=false;if(!ready)return;
-  var c=clips[i],o={videoId:c.id,startSeconds:c.s,endSeconds:c.e};
+  var c=clips[i],st=player.getPlayerState();
+  if(play&&curVid===c.id&&c.e<=curEnd&&(st===1||st===2||st===3)){
+    player.seekTo(c.s,true);player.playVideo();playing=true;
+    clearInterval(timer);timer=setInterval(tick,100);return;
+  }
+  curVid=c.id;curEnd=runEnd(i);
+  var o={videoId:c.id,startSeconds:c.s,endSeconds:curEnd};
   if(play)player.loadVideoById(o);else player.cueVideoById(o);
 }
 function tick(){
   if(!ready)return;var c=clips[i],t=player.getCurrentTime?player.getCurrentTime():0;
   $('prog').style.width=Math.min(100,Math.max(0,(t-c.s)/(c.e-c.s)*100))+'%';
-  // vangnet: de speler stopt zelf op endSeconds, maar controleer ook hier
-  if(t>=c.e-0.15&&player.getPlayerState()===1){player.pauseVideo();ended();}
+  if(t>=c.e-0.1&&player.getPlayerState()===1){player.pauseVideo();ended();}
 }
 function ended(){
   if(!playing)return;playing=false;clearInterval(timer);
@@ -91,7 +101,7 @@ function ended(){
 }
 function onState(e){
   if(e.data===0)ended();
-  if(e.data===1){playing=true;$('status').textContent='';clearInterval(timer);timer=setInterval(tick,250);player.setPlaybackRate(+$('rate').value)}
+  if(e.data===1){playing=true;$('status').textContent='';clearInterval(timer);timer=setInterval(tick,100);player.setPlaybackRate(+$('rate').value)}
   else clearInterval(timer);
 }
 window.onYouTubeIframeAPIReady=function(){
@@ -111,7 +121,7 @@ else{
   render();
   var s=document.createElement('script');s.src='https://www.youtube.com/iframe_api';document.head.appendChild(s);
 }
-$('play').onclick=function(){if(!ready)return;var st=player.getPlayerState();if(st===2){player.playVideo()}else load(i,true)};
+$('play').onclick=function(){if(!ready)return;var st=player.getPlayerState(),t=player.getCurrentTime();if(st===2&&t>=clips[i].s&&t<clips[i].e-0.3){player.playVideo()}else load(i,true)};
 $('replay').onclick=function(){load(i,true)};
 $('next').onclick=function(){if(i<clips.length-1)load(i+1,true)};
 $('loop').onclick=function(){loop=!loop;this.setAttribute('aria-pressed',loop)};
